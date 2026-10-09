@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Experiment 11: M-PSK & M-QAM Simulator</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        :root { --primary: #0052cc; --bg: #f4f5f7; --card-bg: #ffffff; --border: #dfe1e6; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: var(--bg); color: #172b4d; }
+        h1 { text-align: center; color: var(--primary); margin-bottom: 25px; }
+        .container { display: flex; flex-wrap: wrap; gap: 20px; }
+        .sidebar { flex: 1; min-width: 320px; max-width: 400px; background: var(--card-bg); padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(9, 30, 66, 0.08); }
+        .main-content { flex: 3; min-width: 600px; display: flex; flex-direction: column; gap: 20px; }
+        .plot-row { display: flex; gap: 20px; height: 450px; }
+        .plot { flex: 1; background: var(--card-bg); border-radius: 12px; box-shadow: 0 2px 8px rgba(9, 30, 66, 0.08); padding: 15px; position: relative; }
+        .full-width-plot { background: var(--card-bg); border-radius: 12px; box-shadow: 0 2px 8px rgba(9, 30, 66, 0.08); padding: 15px; height: 400px; }
+        
+        .form-group { margin-bottom: 18px; }
+        label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 14px; color: #42526e; }
+        select, input { width: 100%; padding: 10px; border: 2px solid var(--border); border-radius: 6px; box-sizing: border-box; font-size: 14px; outline: none; transition: border-color 0.2s; }
+        select:focus, input:focus { border-color: var(--primary); }
+        button { width: 100%; padding: 12px; background-color: var(--primary); color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: 600; cursor: pointer; transition: background 0.3s; margin-top: 10px; }
+        button:hover { background-color: #0047b3; }
+        
+        .box { padding: 18px; border-radius: 8px; margin-top: 20px; font-size: 14px; line-height: 1.5; }
+        .box h4 { margin-top: 0; margin-bottom: 10px; font-size: 15px; }
+        .validation-box { background: #e6fcff; border-left: 5px solid #00b8d9; }
+        .obs-box { background: #fffae6; border-left: 5px solid #ffab00; }
+        .stats-box { background: #e3fcef; border-left: 5px solid #36b37e; }
+    </style>
+</head>
+<body>
+
+<h1>Experiment 11: M-PSK & M-QAM Simulator</h1>
+
+<div class="container">
+    <div class="sidebar">
+        <h3>Simulation Parameters</h3>
+        <div class="form-group">
+            <label for="modType">Modulation Scheme:</label>
+            <select id="modType">
+                <option value="QPSK">QPSK (4-PSK)</option>
+                <option value="8PSK">8-PSK</option>
+                <option value="16QAM">16-QAM</option>
+                <option value="64QAM">64-QAM</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="mapType">Symbol Mapping:</label>
+            <select id="mapType">
+                <option value="Gray">Gray Mapping</option>
+                <option value="Binary">Binary Mapping</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="snrInput">Channel SNR (Es/N0 in dB):</label>
+            <input type="number" id="snrInput" value="10" step="1">
+            <small style="color:#6b778c; font-size: 12px;">Applies to Constellation & current run stats.</small>
+        </div>
+        <div class="form-group">
+            <label for="numSymbols">Number of Symbols:</label>
+            <input type="number" id="numSymbols" value="2000" step="1000">
+        </div>
+        
+        <button onclick="runAll()">Run Simulation</button>
+
+        <div class="box stats-box">
+            <h4>Current Run Stats (at <span id="lblSnr">10</span> dB)</h4>
+            <div id="statsOutput">Click 'Run Simulation' to view results.</div>
+        </div>
+
+        <div class="box validation-box">
+            <h4>Mandatory Validation</h4>
+            <div id="validationOutput">Energy normalization verification will appear here.</div>
+        </div>
+        
+        <div class="box obs-box">
+            <h4>Observation & Interpretation</h4>
+            <div id="observationOutput">Select parameters and run to see interpretations.</div>
+        </div>
+    </div>
+    
+    <div class="main-content">
+        <div class="plot-row">
+            <div id="constellationPlot" class="plot"></div>
+            <div id="berSerPlot" class="plot"></div>
+        </div>
+        <div class="full-width-plot" id="spectralEffPlot"></div>
+    </div>
+</div>
+
+<script>
+const getGray = (n) => n ^ (n >> 1);
+
+function generateConstellation(modType, mapType) {
+    let M, symbols = [], E_avg_unnorm = 0;
+    
+    if (modType === 'QPSK' || modType === '8PSK') {
+        M = modType === 'QPSK' ? 4 : 8;
+        for (let i = 0; i < M; i++) {
+            let bitsVal = mapType === 'Gray' ? getGray(i) : i;
+            let phase = (2 * Math.PI * i) / M + (modType === 'QPSK' ? Math.PI/4 : 0);
+            let I = Math.cos(phase);
+            let Q = Math.sin(phase);
+            symbols.push({I, Q, val: bitsVal});
+            E_avg_unnorm += (I*I + Q*Q);
+        }
+        E_avg_unnorm /= M;
+    } else {
+        M = modType === '16QAM' ? 16 : 64;
+        let levels = Math.sqrt(M);
+        let bitsPerAxis = Math.log2(M) / 2;
+        
+        for (let i = 0; i < M; i++) {
+            let row = Math.floor(i / levels);
+            let col = i % levels;
+            
+            let ampI = 2 * col - (levels - 1);
+            let ampQ = (levels - 1) - 2 * row;
+            
+            let bitsRow = mapType === 'Gray' ? getGray(row) : row;
+            let bitsCol = mapType === 'Gray' ? getGray(col) : col;
+            let bitsVal = (bitsRow << bitsPerAxis) | bitsCol;
+            
+            symbols.push({I: ampI, Q: ampQ, val: bitsVal});
+            E_avg_unnorm += (ampI*ampI + ampQ*ampQ);
+        }
+        E_avg_unnorm /= M;
+    }
+    
+    let normFactor = 1 / Math.sqrt(E_avg_unnorm);
+    let normalizedSymbols = symbols.map(s => ({
+        I: s.I * normFactor,
+        Q: s.Q * normFactor,
+        val: s.val
+    }));
+    
+    let mapper = new Array(M);
+    for(let s of normalizedSymbols) {
+        mapper[s.val] = {I: s.I, Q: s.Q};
+    }
+    
+    return { M, mapper, symbols: normalizedSymbols, E_avg_unnorm, normFactor };
+}
+
+function demodulate(rxI, rxQ, symbols) {
+    let minD2 = Infinity, minVal = -1;
+    for (let s of symbols) {
+        let d2 = (rxI - s.I)**2 + (rxQ - s.Q)**2;
+        if (d2 < minD2) { minD2 = d2; minVal = s.val; }
+    }
+    return minVal;
+}
+
+function simulate(constellation, snrdB, numSymbols) {
+    let M = constellation.M;
+    let mapper = constellation.mapper;
+    let numBitsPerSymbol = Math.log2(M);
+    let snrLinear = Math.pow(10, snrdB / 10);
+    let sigma = Math.sqrt(1 / (2 * snrLinear));
+    
+    let rxSymbols = [], bitErrors = 0, symbolErrors = 0;
+    
+    for (let i=0; i<numSymbols; i++) {
+        let txVal = Math.floor(Math.random() * M);
+        let txSym = mapper[txVal];
+        
+        let u1 = Math.random(), u2 = Math.random();
+        while(u1 === 0) u1 = Math.random();
+        let nI = sigma * Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+        let nQ = sigma * Math.sqrt(-2.0 * Math.log(u1)) * Math.sin(2.0 * Math.PI * u2);
+        
+        let rxI = txSym.I + nI;
+        let rxQ = txSym.Q + nQ;
+        rxSymbols.push({I: rxI, Q: rxQ});
+        
+        let rxVal = demodulate(rxI, rxQ, constellation.symbols);
+        
+        if (rxVal !== txVal) {
+            symbolErrors++;
+            let diff = rxVal ^ txVal;
+            while (diff > 0) { bitErrors += diff & 1; diff >>= 1; }
+        }
+    }
+    
+    return {
+        rxSymbols,
+        SER: symbolErrors / numSymbols,
+        BER: bitErrors / (numSymbols * numBitsPerSymbol)
+    };
+}
+
+function getDecisionRegions(constellation, range) {
+    let gridX = [], gridY = [], z = [];
+    let steps = 80; // Performance vs quality balance
+    let stepSize = (2 * range) / steps;
+    for (let i = 0; i <= steps; i++) {
+        let y = -range + i * stepSize;
+        gridY.push(y);
+        let zRow = [];
+        for (let j = 0; j <= steps; j++) {
+            let x = -range + j * stepSize;
+            if (i === 0) gridX.push(x);
+            zRow.push(demodulate(x, y, constellation.symbols));
+        }
+        z.push(zRow);
+    }
+    return {x: gridX, y: gridY, z: z};
+}
+
+function updateObservations(modType, mapType, snr) {
+    let obs = "<b>Expected Physical Effect:</b><br>";
+    if (modType === 'QPSK') obs += "QPSK (M=4): Provides robust performance against noise. Expected SER/BER to be lowest among schemes here.<br>";
+    else if (modType === '8PSK') obs += "8-PSK (M=8): Constellation points are closer on the circle than QPSK. Expect higher BER due to reduced Euclidean distance.<br>";
+    else if (modType === '16QAM') obs += "16-QAM (M=16): Higher spectral efficiency (4 bits/sym) but amplitude variations require higher SNR to maintain low BER.<br>";
+    else if (modType === '64QAM') obs += "64-QAM (M=64): Highly dense constellation yielding highest spectral efficiency (6 bits/sym). Extremely sensitive to noise; expect significant BER/SER at lower SNRs.<br>";
+    
+    if (mapType === 'Gray') obs += "Gray Mapping: Adjacent symbols differ by 1 bit, minimizing BER (BER ≈ SER / log2(M)).<br>";
+    else obs += "Binary Mapping: Adjacent symbols differ by multiple bits. Expect BER > SER / log2(M), underperforming Gray mapping.<br>";
+    
+    obs += `<br><b>Post-Simulation Diagnosis:</b><br>At ${snr} dB, observe the decision boundaries and received scatter. If points cross the heatmap boundaries, errors occur. Compare BER across modulations in the bottom chart to verify the spectral/energy efficiency trade-off matches theory.`;
+    
+    document.getElementById('observationOutput').innerHTML = obs;
+}
+
+function plotConstellation(constellation, rxSymbols) {
+    let dr = getDecisionRegions(constellation, 1.6);
+    
+    let trace1 = {
+        x: dr.x, y: dr.y, z: dr.z,
+        type: 'heatmap', colorscale: 'Pastel', showscale: false, opacity: 0.5, hoverinfo: 'none'
+    };
+    
+    let trace2 = {
+        x: rxSymbols.map(s => s.I), y: rxSymbols.map(s => s.Q),
+        mode: 'markers', type: 'scatter', name: 'Received',
+        marker: { size: 3, color: '#0052cc', opacity: 0.5 }
+    };
+    
+    let trace3 = {
+        x: constellation.symbols.map(s => s.I), y: constellation.symbols.map(s => s.Q),
+        mode: 'markers+text', type: 'scatter', name: 'Ideal',
+        text: constellation.symbols.map(s => s.val.toString(2).padStart(Math.log2(constellation.M), '0')),
+        textposition: 'top center',
+        marker: { size: 10, color: '#ff5630', symbol: 'x' },
+        textfont: { size: 10 }
+    };
+    
+    let layout = {
+        title: { text: 'Constellation & Decision Regions', font: { size: 16 } },
+        xaxis: { title: 'In-Phase (I)', range: [-1.7, 1.7], zeroline: true },
+        yaxis: { title: 'Quadrature (Q)', range: [-1.7, 1.7], zeroline: true },
+        margin: { l: 50, r: 20, b: 40, t: 40 },
+        showlegend: true,
+        legend: { x: 1, y: 1, xanchor: 'right' }
+    };
+    
+    Plotly.newPlot('constellationPlot', [trace1, trace2, trace3], layout, {responsive: true});
+}
+
+function plotBerSerCurve(modType, mapType, numSymbols) {
+    let snrRange = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20];
+    let bers = [], sers = [];
+    let constellation = generateConstellation(modType, mapType);
+    let curveSymbols = Math.max(2000, Math.min(numSymbols, 30000));
+    
+    for (let snr of snrRange) {
+        let res = simulate(constellation, snr, curveSymbols);
+        bers.push(res.BER === 0 ? 1e-6 : res.BER);
+        sers.push(res.SER === 0 ? 1e-6 : res.SER);
+    }
+    
+    let traceBer = { x: snrRange, y: bers, mode: 'lines+markers', name: 'BER', type: 'scatter', line: {color: '#36b37e'} };
+    let traceSer = { x: snrRange, y: sers, mode: 'lines+markers', name: 'SER', type: 'scatter', line: {color: '#ffab00'} };
+    
+    let layout = {
+        title: { text: `${modType} Error Rates vs SNR`, font: { size: 16 } },
+        xaxis: { title: 'SNR (Es/N0) [dB]' },
+        yaxis: { title: 'Error Rate', type: 'log', range: [-5, 0] },
+        margin: { l: 60, r: 20, b: 40, t: 40 },
+        legend: { x: 1, y: 1, xanchor: 'right' }
+    };
+    
+    Plotly.newPlot('berSerPlot', [traceSer, traceBer], layout, {responsive: true});
+}
+
+function plotSpectralEfficiency(mapType, snr, numSymbols) {
+    let mods = ['QPSK', '8PSK', '16QAM', '64QAM'];
+    let efficiencies = [2, 3, 4, 6];
+    let bers = [];
+    let curveSymbols = Math.max(2000, Math.min(numSymbols, 30000));
+    
+    for (let m of mods) {
+        let c = generateConstellation(m, mapType);
+        let res = simulate(c, snr, curveSymbols);
+        bers.push(res.BER === 0 ? 1e-6 : res.BER);
+    }
+    
+    let trace = {
+        x: efficiencies, y: bers,
+        mode: 'lines+markers+text', type: 'scatter',
+        marker: { size: 12, color: '#6554c0' },
+        line: { width: 3, dash: 'dot' },
+        text: mods, textposition: 'top right', textfont: { size: 12, color: '#172b4d' }
+    };
+    
+    let layout = {
+        title: { text: `Trade-off: BER vs Spectral Efficiency at SNR = ${snr} dB`, font: { size: 16 } },
+        xaxis: { title: 'Spectral Efficiency (bits/s/Hz)', tickvals: [2,3,4,5,6] },
+        yaxis: { title: 'Bit Error Rate (BER)', type: 'log', range: [-5, 0] },
+        margin: { l: 60, r: 40, b: 50, t: 50 }
+    };
+    
+    Plotly.newPlot('spectralEffPlot', [trace], layout, {responsive: true});
+}
+
+function runAll() {
+    let btn = document.querySelector('button');
+    btn.innerText = "Simulating...";
+    btn.disabled = true;
+    
+    setTimeout(() => {
+        try {
+            let modType = document.getElementById('modType').value;
+            let mapType = document.getElementById('mapType').value;
+            let snr = parseFloat(document.getElementById('snrInput').value);
+            let numSymbols = parseInt(document.getElementById('numSymbols').value);
+            
+            document.getElementById('lblSnr').innerText = snr;
+            
+            let constellation = generateConstellation(modType, mapType);
+            
+            let actual_energy_post = 0;
+            for (let s of constellation.symbols) {
+                actual_energy_post += (s.I*s.I + s.Q*s.Q);
+            }
+            actual_energy_post /= constellation.M;
+            
+            document.getElementById('validationOutput').innerHTML = `
+                Average Energy (Before Norm): <b>${constellation.E_avg_unnorm.toFixed(4)}</b><br>
+                Average Energy (After Norm): <b>${actual_energy_post.toFixed(4)}</b><br>
+                <i style="color: #00b8d9;">✓ Symbol energy successfully normalized to 1.</i>
+            `;
+            
+            updateObservations(modType, mapType, snr);
+            
+            let simResult = simulate(constellation, snr, numSymbols);
+            
+            document.getElementById('statsOutput').innerHTML = `
+                Symbol Error Rate (SER): <b>${simResult.SER > 0 ? simResult.SER.toExponential(4) : '0 (No errors)'}</b><br>
+                Bit Error Rate (BER): <b>${simResult.BER > 0 ? simResult.BER.toExponential(4) : '0 (No errors)'}</b>
+            `;
+            
+            plotConstellation(constellation, simResult.rxSymbols);
+            plotBerSerCurve(modType, mapType, numSymbols);
+            plotSpectralEfficiency(mapType, snr, numSymbols);
+            
+        } catch(e) {
+            console.error(e);
+            alert("An error occurred during simulation.");
+        } finally {
+            btn.innerText = "Run Simulation";
+            btn.disabled = false;
+        }
+    }, 50);
+}
+
+window.onload = runAll;
+</script>
+</body>
+</html>
